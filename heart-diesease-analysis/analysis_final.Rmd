@@ -1,0 +1,436 @@
+---
+title: "Heart Disease Prediction"
+author: "Jaeseung Lee (jsl8@illinois.edu)"
+date: "December 9th 2020"
+output:
+  html_document: 
+    theme: default
+    toc: yes
+---
+
+```{r, setup, include = FALSE}
+knitr::opts_chunk$set(echo = FALSE, fig.align = 'center')
+```
+
+```{r, load-packages, include = FALSE}
+# load packages
+library("tidyverse")
+library("caret")
+library("rpart")
+library("rpart.plot")
+library("ggplot2")
+```
+
+```{r read-full-data, warning = FALSE, message = FALSE}
+# read full data
+hd = readr::read_csv("data/hd.csv")
+```
+
+***
+
+## Abstract
+
+Machine learning and deep learning is actively applied in the medical/health care field. In this project, I'm going to predict the presence and absence of heart disease with the machine learning using the dataset that gives a number of variables along with a target condition. As there are many missing values, the accuracy heavily depends on variable selection and preprocessing. In the original dataset, we have 5 levels of response variable "v0", "v1", "v2", "v3","v4". But there are many missing values in the dataset such as “slope”, “ca”, and “thal” columns, which implies that we are not able to make elaborate prediction model, that's why I predicted presence and absence of heart disease. As a result, types of chest pain type and presence of exercise induced angina are key feature values.
+
+
+***
+
+## Introduction
+
+Nowadays, many technologies of Machine Learning and Deep Learning are applied in medical industry. For example, screening the photo of X-ray computer can predict whether patient have pneumonia or not, or medical team can develop the new pharmaceuticals. Rather than work on deep learning, I'm going to predict the presence and absence of heart disease with the machine learning using the dataset that gives a number of variables along with a target condition. You can see descriptions of dataset in appendix.
+
+```{r}
+# Bar plot for num (Heart disease) 
+ggplot(hd, aes(x=num, fill=num)) + 
+  geom_bar() +
+  xlab("Heart Disease") +
+  ylab("Count") +
+  ggtitle("Analysis of Presence and Absence of Heart Disease") +
+  scale_fill_discrete(name = "Heart Disease", labels = c("No Disease", "v1", "v2", "v3", "v4"))
+prop.table(table(hd$num))
+```
+You can see the dataset, composed of 44.7 % with no diesease and 55.28 % with heart diesease.
+In this project, I will predict 2 status whether patients having disease or not, rather than predict 5 target variables. 
+***
+
+## Methods
+
+### 1. Train-Test Split
+```{r}
+# train-test split the data
+set.seed(42)
+trn_idx = createDataPartition(hd$num, p =0.80, list = TRUE)
+hd_trn = hd[trn_idx$Resample1, ]
+hd_tst = hd[-trn_idx$Resample1,]
+```
+
+### 2. Preprocessing
+```{r}
+# eda train data
+skimr::skim(hd_trn)
+```
+
+
+```{r}
+# change character variables to be factors
+hd_trn$num = factor(hd_trn$num)
+hd_trn$location = factor(hd_trn$location)
+hd_trn$cp = factor(hd_trn$cp)
+hd_trn$sex = factor(hd_trn$sex)
+hd_trn$fbs = factor(hd_trn$fbs)
+hd_trn$restecg = factor(hd_trn$restecg)
+hd_trn$exang = factor(hd_trn$exang)
+```
+
+In the summary of train dataset, I have to change some variable types, numeric into categorical. To be specific fbs represent that whether condition of wheter person's fasting blood sugar is greater than 120 mg or not, it should be factor variable.
+
+```{r}
+# Representation of Cholesterol level 
+hd_trn %>%
+  ggplot(aes(x=age,y=chol,color=sex, size=chol))+
+  geom_point(alpha=0.7)+xlab("Age") +
+  ylab("Cholesterol")+
+  guides(fill = guide_legend(title = "Gender"))
+
+hd_trn[which(hd_trn$chol == 0),]$chol = NA
+```
+
+```{r}
+# function to change v1~v4 into 0 which represent having heart diesease
+change_num = function(x){
+  if (x == "v1") return (1)
+  else if (x == "v2") return (1)
+  else if (x == "v3") return (1)
+  else if (x == "v4") return (1)
+  else if (x == "v0") return (0)
+}
+
+hd_trn$num = sapply(hd_trn$num, change_num)
+hd_trn$num = factor(hd_trn$num)
+levels(hd_trn$num)
+```
+
+
+```{r}
+# Bar plot for num (Heart disease) whether patients have disease or not 
+ggplot(hd_trn, aes(x=num, fill=num)) + 
+  geom_bar() +
+  xlab("Heart Disease") +
+  ylab("Count") +
+  ggtitle("Analysis of Presence and Absence of Heart Disease") +
+  scale_fill_discrete(name = "Heart Disease", labels = c("Absence", "Presence"))
+prop.table(table(hd_trn$num))
+```
+
+### 3. Feature Engineering
+```{r}
+# function to determine proportion of NAs in a vector
+na_prop = function(x) {
+  mean(is.na(x))
+}
+# create training dataset without columns containing more than 30% NAs
+hd_trn = hd_trn[, !sapply(hd_trn, na_prop) > 0.3]
+```
+
+```{r}
+# additional feature engineering
+ggplot(data=hd_trn) + geom_density(mapping = aes(x= chol, colour = num))
+ggplot(data=hd_trn) + geom_density(mapping = aes(x= trestbps, colour = num))
+ggplot(data=hd_trn) + geom_density(mapping = aes(x= thalach, colour = num))
+ggplot(data=hd_trn) + geom_density(mapping = aes(x= oldpeak, colour = num))
+
+# chol: replace with mean
+rep_chol = mean(hd_trn$chol, na.rm = T)
+hd_trn$chol <- ifelse(is.na(hd_trn$chol), rep_chol, hd_trn$chol)
+table(is.na(hd_trn$chol))
+
+
+# trestbps: replace with mean -> distribution is identical
+rep_trestbps = mean(hd_trn$trestbps, na.rm = T)
+hd_trn$trestbps <- ifelse(is.na(hd_trn$trestbps), rep_trestbps, hd_trn$trestbps)
+table(is.na(hd_trn$trestbps))
+
+# thalach: replace with mean - > distribution is similar
+rep_thal_med = median(hd_trn$thalach, na.rm = T)
+rep_thal_avg = mean(hd_trn$thalach, na.rm = T)
+hd_trn$thalach <- ifelse(is.na(hd_trn$thalach), rep_thal_avg, hd_trn$thalach)
+table(is.na(hd_trn$thalach))
+
+# oldpeak: distribution is different - > median
+rep_oldpeak = median(hd_trn$oldpeak, na.rm = T)
+hd_trn$oldpeak <- ifelse(is.na(hd_trn$oldpeak), rep_oldpeak, hd_trn$oldpeak)
+table(is.na(hd_trn$oldpeak))
+
+
+hd_trn_full = na.omit(hd_trn)
+skimr::skim(hd_trn_full)
+```
+
+### 4. Training Model
+
+```{r}
+# estimation-validation  split the data
+set.seed(42)
+# cross-validation
+cv_5 = trainControl(method = "cv", number = 5)
+```
+
+```{r train-data2, cache=FALSE, results='hide', message=FALSE, include=FALSE}
+
+## decision tree
+tree_mod = train(
+  form = num ~.,
+  data = hd_trn_full,
+  method = "rpart",
+  trControl = cv_5
+)
+
+## XGBoost
+xg_mod = train(
+  form = num ~.,
+  data = hd_trn_full,
+  method = "xgbTree",
+  trControl = cv_5
+)
+
+
+# NN
+nn_mod = train(
+  form = num ~.,
+  data = hd_trn_full,
+  method = "nnet",
+  trControl = cv_5,
+  verbose = FALSE
+)
+
+
+# gbm
+gbm_mod = train(
+  form = num ~.,
+  data = hd_trn_full,
+  method = "gbm",
+  trControl = cv_5,
+  verbose = FALSE
+)
+
+
+## Random Forest
+rf_mod = train(
+  form = num ~.,
+  data = hd_trn_full,
+  method = "rf",
+  trControl = cv_5,
+  verbose =FALSE
+)
+
+```
+
+```{r}
+print("Decision Tree")
+confusionMatrix(tree_mod)
+print("XGBoost Tree")
+confusionMatrix(xg_mod)
+print("Neural Net Tree")
+confusionMatrix(nn_mod)
+print("Gradient Boosting Tree")
+confusionMatrix(gbm_mod)
+print("Random Forest Tree")
+confusionMatrix(rf_mod)
+```
+
+
+```{r}
+# estimation-validation  split the data
+set.seed(42)
+est_idx = createDataPartition(hd_trn$num, p =0.80, list = TRUE)
+hd_est = hd_trn_full[est_idx$Resample1, ]
+hd_val = hd_trn_full[-est_idx$Resample1,]
+
+calc_acc = function(actual,predicted){
+  mean(actual == predicted)
+}
+# Decision Tree
+grid = expand.grid(
+  cp_vals = c(0.1, 0.01, 0.001, 0.0001, 0),
+  minsplit = seq(5,10, by = 1),
+  acc = 0
+)
+
+nrow(grid)
+cp_vals = c(0.1, 0.01, 0.001, 0.0001, 0)
+
+# Train decision tree model with the ESTIMATION data
+for (i in 1:nrow(grid)){
+  mod_tree = rpart(num~., data = hd_est, cp = grid$cp_vals[i], minsplit = grid$minsplit[i])
+  grid$acc[i] = calc_acc(hd_val$num, predict(mod_tree, hd_val, type = "class"))
+}
+max(grid$acc)
+grid %>% 
+  dplyr::arrange(acc)
+  
+
+
+mod_best = rpart(num~.,, data = hd_est, cp = 0.01, minsplit = 10)
+pred_best = predict(mod_best, hd_val, type = "class")
+
+table(
+  predicted = pred_best,
+  actual = hd_val$num
+)
+calc_acc(hd_val$num, pred_best)
+```
+
+### 5. Data
+
+In the summary of train dataset using skim, there are some variable neeed to be corrected. I changed "fbs", "num", "location", "cp", "sex", "fbs", "restecg", and "exang" variable types, numeric into categorical. To be specific “fbs” represent that whether condition of whether person's fasting blood sugar is greater than 120 mg or not, it should be factor variable.
+
+As you see on the Age - Cholesterol plot, there are 0 values of cholesterol, I changed those value in to NA. After that replaced NA value of chol, trestbps, thalach with mean value of each data columns, and replaced missing value of oldpeak with median value.
+```{r}
+# Representation of Cholesterol level 
+hd_trn_full %>%
+  ggplot(aes(x=age,y=chol,color=sex, size=chol))+
+  geom_point(alpha=0.7)+xlab("Age") +
+  ylab("Cholesterol")+
+  guides(fill = guide_legend(title = "Gender"))
+```
+
+In the original dataset, we have 5 levels of response variable "v0", "v1", "v2", "v3","v4". But there are many missing values in the dataset such as “slope”, “ca”, and “thal” columns, which implies that we are not able to make elaborate prediction model. Therefore, I changed the level of response variable in to 1 and 0 to predict the condition whether patients have heart disease or not.
+```{r}
+# Bar plot for num (Heart disease) whether patients have disease or not 
+ggplot(hd_trn_full, aes(x=num, fill=num)) + 
+  geom_bar() +
+  xlab("Heart Disease") +
+  ylab("Count") +
+  ggtitle("Analysis of Presence and Absence of Heart Disease") +
+  scale_fill_discrete(name = "Heart Disease", labels = c("Absence", "Presence"))
+prop.table(table(hd_trn_full$num))
+```
+
+Lastly, I removed columns with more than 30% NAs and rows with NA.
+
+### 6. Modeling
+
+
+When training model with Caret package, it is easy to apply several methods. Among 5 methods, XGBoost model's 0.8211 of the accuracy is the highest, with the lowest false negative rate.
+
+First, split train data into estimation-validation. I will use two modeling methods which are KNN and decision tree learned in STAT 432 class, and check which method predict better. By using knn, the model predicts 65.3% of accuracy with k = 5. On the other hand, the model predicts 77.2% of accuracy with 0.01 of cp and 5 of minsplit by using decision tree. Therefore, I can say decision tree shows better performance compared to the KNN.
+
+
+## Results
+
+```{r}
+# change character variables to be factors
+hd_tst$num = factor(hd_tst$num)
+hd_tst$location = factor(hd_tst$location)
+hd_tst$cp = factor(hd_tst$cp)
+hd_tst$sex = factor(hd_tst$sex)
+hd_tst$fbs = factor(hd_tst$fbs)
+hd_tst$restecg = factor(hd_tst$restecg)
+hd_tst$exang = factor(hd_tst$exang)
+
+# Apply function to change v1~v4 into 0 which represent having heart diesease
+hd_tst$num = sapply(hd_tst$num, change_num)
+hd_tst$num = factor(hd_tst$num)
+levels(hd_tst$num)
+nrow(hd_tst)
+
+hd_tst_full = hd_tst[, c("age","sex","cp","trestbps","chol","fbs","restecg","thalach","exang","oldpeak","location","num")]
+hd_tst_full_nona = na.omit(hd_tst_full)
+skimr::skim(hd_tst_full_nona)
+```
+
+```{r}
+# CHECK ACCUACY WITH CARET
+pred_tst_tree = predict(tree_mod, hd_tst_full_nona, type = "raw")
+length(pred_tst_tree) # 153
+length(hd_tst_full_nona$num)# 153
+
+mean(hd_tst_full_nona$num == pred_tst_tree)
+
+table(
+  predicted = pred_tst_tree,
+  actual = hd_tst_full_nona$num
+)
+
+pred_tst_xgb = predict(xg_mod, hd_tst_full_nona, type = "raw")
+length(pred_tst_xgb)
+length(hd_tst_full_nona$num)
+
+mean(hd_tst_full_nona$num == pred_tst_xgb)
+
+table(
+  predicted = pred_tst_xgb,
+  actual = hd_tst_full_nona$num
+)
+
+pred_tst_nn = predict(nn_mod, hd_tst_full_nona, type = "raw")
+length(pred_tst_nn)
+mean(hd_tst_full_nona$num == pred_tst_nn)
+table(
+  predicted = pred_tst_nn,
+  actual = hd_tst_full_nona$num
+)
+
+pred_tst_gbm = predict(gbm_mod, hd_tst_full_nona, type = "raw")
+mean(hd_tst_full_nona$num == pred_tst_gbm)
+table(
+  predicted = pred_tst_gbm,
+  actual = hd_tst_full_nona$num
+)
+
+pred_tst_rf = predict(rf_mod, hd_tst_full_nona, type = "raw")
+mean(hd_tst_full_nona$num == pred_tst_rf)
+table(
+  predicted = pred_tst_rf,
+  actual = hd_tst_full_nona$num
+)
+```
+Caret package doesn't allow NA values in test data, that's  why it only predict 153 obs among 182 obs. When we trained data, XGBoost has better performance than other methods, however in this step, Randomforest looks better. Compared to Caret package, rpart package allows to predict test data that has NA values. Here are the two results depenidng on exististance of NAs.
+
+```{r}
+# Predict test data with NA
+
+mod_tst_na = rpart(num ~., data = hd_trn_full, cp = 0.01, minsplit = 10)
+pred_tst_1 = predict(mod_tst_na, hd_tst_full, type = "class")
+mean(hd_tst_full$num == pred_tst_1)
+rpart.plot(mod_tst_na)
+
+table(
+  predicted = pred_tst_1,
+  actual = hd_tst_full$num
+)
+```
+
+```{r}
+# Predict test data without NA
+mod_tst_nona = rpart(num ~., data = hd_trn_full, cp = 0.01, minsplit =5)
+pred_tst_2 = predict(mod_tst_nona, hd_tst_full_nona, type = "class")
+mean(hd_tst_full_nona$num == pred_tst_2)
+
+
+table(
+  predicted = pred_tst_2,
+  actual = hd_tst_full_nona$num
+)
+```
+
+I've used several models and method to see which model is best for predicting having heart disease.
+As you see accuracies of several model/method, I will choose rpart's decision tree model with test dataset containing NA values. When using random forest and XGBoost in Caret, it is sensitive to NA values when predict target value, but rpart doesn't. In my opinion, the model has to robust even if it contains NAs. Also, compared to Analysis 1, filling NA value improves the model accuracy from 0.8131868 to 0.8186813.
+
+
+
+## Changelog
+Compared to Analysis 1, instead of remove all the NaN values, I did some work for missing data imputation. After creating training dataset without columns containing more than 30% NAs, NAs still exist on "chol","trestbps","thalach", and "oldpeak" column. According to the density graph of chol, trestbps, and thalach above, distributions of normal people and people who have heart disease are similar, I replaced NAs value with mean value of column data. As density on 0 for oldpeak was significantly different, I replaced NAS value with median value of column data. 
+
+Additionally, I used Caret package to compare more models to check false negative rate, rpart's decision tree was better. Also, using grid search I could compare more parameters when I train the model.
+
+
+## Discussion
+
+I thought when we use complex model such as XGBoost andrandom forest which are imroved version of decision tree, those will outperform simple decision tree model. But the result wasn't, from this experiment I realized that complicated model does not always improve the model, it depends on the dataset.
+
+
+## Appendix
+Here is the source of data
+(https://archive.ics.uci.edu/ml/datasets/Heart+Disease)
+
