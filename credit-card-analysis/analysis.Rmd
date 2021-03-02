@@ -1,0 +1,374 @@
+---
+title: "Credit Card Fraud Detection"
+author: "Jaeseung Lee (jsl8@illinois.edu)"
+date: "Nov 19th 2020"
+output:
+  html_document: 
+    theme: default
+    toc: yes
+---
+
+```{r, setup, include = FALSE}
+knitr::opts_chunk$set(echo = FALSE, fig.align = 'center',
+                      progress = FALSE, verbose = FALSE)
+```
+
+```{r, load-packages, include = FALSE}
+# load packages
+library("tidyverse")
+library("caret")
+library("ggplot2")
+library("DMwR")
+library("MLmetrics")
+```
+
+```{r make-data, warning = FALSE, message = FALSE}
+# read data and subset
+source("make-data.R")
+```
+
+```{r read-full-data, warning = FALSE, message = FALSE}
+# read full data
+cc = data.table::fread("data/cc.csv.gz")
+```
+
+```{r read-subset-data, warning = FALSE, message = FALSE}
+# read subset of data
+cc_sub = data.table::fread("data/cc-sub.csv")
+```
+
+***
+
+## Abstract
+As the dataset is highly imbalanced, we need to implement oversampling and undersampling on target condition wheter credit card transaction is fraud or geniune. Therefore, we focused on applying SMOTE method and compare performances of several models based on "Sensitivity" and "F1 Score", not the accuracy. And we will evaluate the performace after using SMOTE. 
+
+***
+
+## Introduction
+Today, most people save credit cards in smart phone application such as samsung pay, apple pay, paypal and etc. Additionally, people save credit card's information for convenience when they shopping online in Amazon or Ebay. There are a high possibility that card information will be stolen when they visit ads which have virus that extract information in mobile or computer. To prevent this risk, the credit card company wants to develop a ML model that identify credit cards transactions whether credit card use is fraud or geniune. 
+
+Given data set presents transactions that occured in two days, where we have 492 frauds out of 284,407 transactions. The dataset contains 30 features, 28 feautres are the result of a PCA transformations and the other 2 are "Time" and "Amount".
+
+```{r}
+# Bar plot for num (Heart disease) whether patients have disease or not
+ggplot(cc_sub, aes(x=Class, fill=Class)) +
+  geom_bar() +
+  xlab("Geniune vs Fraud") +
+  ylab("Count") +
+  ggtitle("Proportion of target value") +
+  scale_fill_discrete(name = "Type", labels = c("fraud", "genuine"))
+prop.table(table(cc_sub$Class))
+```
+***
+
+## Methods
+
+### 1. Train-Test Split
+```{r}
+# test-train split the sub data
+set.seed(42)
+cc$Class = as.factor(cc$Class)
+trn_idx = createDataPartition(cc$Class, p = 0.8, list = TRUE)
+cc_trn = cc[trn_idx$Resample1, ]
+cc_tst = cc[-trn_idx$Resample1, ]
+```
+
+
+```{r}
+# test-train split the sub data
+set.seed(42)
+cc_sub$Class = as.factor(cc_sub$Class)
+trn_idx = createDataPartition(cc_sub$Class, p = 0.8, list = TRUE)
+cc_sub_trn = cc_sub[trn_idx$Resample1, ]
+cc_sub_tst = cc_sub[-trn_idx$Resample1, ]
+```
+
+### 2. Preprocessing
+```{r}
+# eda train data
+skimr::skim(cc_sub_trn)
+```
+
+There are no missing values. 
+
+### 3. EDA
+```{r}
+cc_sub_trn$hour_of_day <- (cc_sub_trn$Time/3600) %% 24 # convert to hours, then reduce mod 24
+cc_sub_trn$Time <- NULL
+ggplot(cc_sub_trn, aes(x = hour_of_day, fill = Class)) +
+  geom_density(alpha = 0.4) + 
+  scale_x_continuous(limits = c(0, 24), breaks = seq(0, 24, 2)) + 
+  labs(title = "Engineered Feature - Hour of Day", 
+       x = "Hour of Day", 
+       y = "Density", 
+       col = "Class") + 
+  scale_fill_discrete(labels = c("Fraud", "Geniune"))
+```
+
+When comparing the hour money transacted, the density of geniune highly tends to be transacted on from 8am to 24pm, however, fraud event can be happen on 2am.
+
+```{r}
+ggplot(cc_sub_trn, aes(x = Amount, fill = Class)) +
+  geom_density(alpha = 0.5) +
+  scale_x_continuous(limits = c(0, 500), breaks = seq(0, 500, 100)) + 
+  labs(title = "Transaction Amount", 
+       x = "Amount", 
+       y = "Density", 
+       col = "Class") + 
+  scale_fill_discrete(labels = c("Fraud", "Geniune"))
+
+```
+
+It shows that larger amount oftransactions are little bit more likely to be fraudulent. It’s not completely clear from the density graph below due to the restricted x range, but the right tail of the fraud density curve is larger, so a higher proportion of fraudulent transactions take a very large value.
+
+### 4. Oversampling
+```{r}
+#cc_trn$Class = as.factor(cc_trn$Class)
+print("Proportion of sub train")
+table(cc_sub_trn$Class)
+print("Proportion of sub test")
+table(cc_sub_tst$Class)
+print("Proportion of full test")
+table(cc_tst$Class)
+cc_trn_SMOTE = SMOTE(Class ~ ., cc_sub_trn, perc.over = 10000, perc.under=100)
+print("Proportion of sub train after SMOTE")
+table(cc_trn_SMOTE$Class)
+```
+As you see, the most big problem of this data is imbalance of "Class" variable. To overcome this I used SMOTE method to oversampling the fraud data. 
+
+Briefly, SMOTE first takes a sample of the data on the side with the least # of classifications and then looks for the k nearest neighbor of this sample. And find the difference between the current sample and these k neighbors annd multiply this difference by any value between 0 and 1 to add it to the original value. As a result, SMOTE operates by adding some points that have been moved in consideration of the neighbors around it.
+
+### Data
+```{r}
+# SMOTE GRAPH
+ggplot(cc_sub_trn, aes(x=Class, fill=Class)) +
+  geom_bar() +
+  xlab("Fraud vs Geniune") +
+  ylab("Count") +
+  ggtitle("Original Proportion of target value") +
+  scale_fill_discrete(name = "Type", labels = c("fraud", "genuine"))
+table(cc_sub_trn$Class)
+prop.table(table(cc_sub_trn$Class))
+
+ggplot(cc_trn_SMOTE, aes(x=Class, fill=Class)) +
+  geom_bar() +
+  xlab("Fraud vs Geniune") +
+  ylab("Count") +
+  ggtitle("Proportion of target value after upsampling") +
+  scale_fill_discrete(name = "Type", labels = c("fraud", "genuine"))
+table(cc_trn_SMOTE$Class)
+prop.table(table(cc_trn_SMOTE$Class))
+```
+
+After applying SMOTE, I have balanced proportion of target value for train data.
+
+### Modeling
+
+I'm going to test model performance on the original dataset which is imbalanced against altered dataset with SMOTE. Also, I used 5 fold cross validation method and "caret" package to train for choosing best parameter for each model. 
+```{r}
+# cross-validation
+cv_5 = trainControl(method = "cv", number = 5)
+```
+
+Here are 5 models with original data.
+```{r train-org-data, cache=FALSE, results='hide', message=FALSE, include=FALSE}
+# train several models with imbalanced train data
+
+## Decision Tree
+cc_tree_mod = train(
+  form = Class ~.,
+  data = cc_sub_trn,
+  method = "rpart",
+  trControl = cv_5
+)
+cc_tree_mod$method
+## Neural Network
+cc_nn_mod = train(
+  form = Class ~.,
+  data = cc_sub_trn,
+  method = "nnet",
+  trControl = cv_5,
+  verbose = FALSE
+)
+cc_nn_mod$method
+## Stochastic Gradient Boosting
+cc_gbm_mod = train(
+  form = Class ~.,
+  data = cc_sub_trn,
+  method = "gbm",
+  trControl = cv_5,
+  verbose =FALSE
+)
+cc_gbm_mod$method
+## Random Forest
+cc_rf_mod = train(
+  form = Class ~.,
+  data = cc_sub_trn,
+  method = "rf",
+  trControl = cv_5,
+  verbose =FALSE
+)
+cc_rf_mod$method
+```
+
+```{r train-alt-data, cache=FALSE, results='hide', message=FALSE, include=FALSE}
+# train several models with balanced train data
+
+## TREE
+cc_tree_mod_smote = train(
+  form = Class ~.,
+  data = cc_trn_SMOTE,
+  method = "rpart",
+  trControl = cv_5
+)
+
+# NN
+cc_nn_mod_smote = train(
+  form = Class ~.,
+  data = cc_trn_SMOTE,
+  method = "nnet",
+  trControl = cv_5,
+  verbose = FALSE
+)
+
+# GBM
+cc_gbm_mod_smote = train(
+  form = Class ~.,
+  data = cc_trn_SMOTE,
+  method = "gbm",
+  trControl = cv_5,
+  verbose =FALSE
+)
+
+# RF
+cc_rf_mod_smote = train(
+  form = Class ~.,
+  data = cc_trn_SMOTE,
+  method = "rf",
+  trControl = cv_5,
+  verbose =FALSE
+)
+```
+I used "cc_tst" that are extracted from the full dataset, but used "cc_sub_trn" for training data. The reason is that if I use "cc_sub_tst" for evaluating model, the dataset contains a few "fraud" less than 20. To be specific, it was difficult to compare performance between models. 
+
+***
+
+## Results
+
+```{r}
+cc_tst$hour_of_day <- (cc_tst$Time/3600) %% 24 # convert to hours, then reduce mod 24
+cc_tst$Time <- NULL
+# TREE RESULTS
+pred_tree = predict(cc_tree_mod, cc_tst, type = "raw")
+cc_tree_mod$method
+table(
+  predicted = pred_tree,
+  actual = cc_tst$Class
+)
+f1_tree = F1_Score(cc_tst$Class,pred_tree)
+sen_tree = Sensitivity(cc_tst$Class,pred_tree)
+
+pred_tree_smote = predict(cc_tree_mod_smote, cc_tst, type = "raw")
+table(
+  predicted = pred_tree_smote,
+  actual = cc_tst$Class
+)
+f1_tree_smote = F1_Score(cc_tst$Class,pred_tree_smote)
+sen_tree_smote = Sensitivity(cc_tst$Class,pred_tree_smote)
+
+# NN RESULTS
+pred_nn = predict(cc_nn_mod, cc_tst, type = "raw")
+cc_nn_mod$method
+table(
+  predicted = pred_nn,
+  actual = cc_tst$Class
+)
+f1_nn = F1_Score(cc_tst$Class,pred_nn)
+sen_nn = Sensitivity(cc_tst$Class,pred_nn)
+
+pred_nn_smote = predict(cc_nn_mod_smote, cc_tst, type = "raw")
+table(
+  predicted = pred_nn_smote,
+  actual = cc_tst$Class
+)
+f1_nn_smote = F1_Score(cc_tst$Class,pred_nn_smote)
+sen_nn_smote = Sensitivity(cc_tst$Class,pred_nn_smote)
+
+
+
+## GBM RESULTS
+pred_gbm = predict(cc_gbm_mod, cc_tst, type = "raw")
+cc_gbm_mod$method
+table(
+  predicted = pred_gbm,
+  actual = cc_tst$Class
+)
+f1_gbm = F1_Score(cc_tst$Class,pred_gbm)
+sen_gbm = Sensitivity(cc_tst$Class,pred_gbm)
+
+pred_gbm_smote = predict(cc_gbm_mod_smote, cc_tst, type = "raw")
+table(
+  predicted = pred_gbm_smote,
+  actual = cc_tst$Class
+)
+f1_gbm_smote = F1_Score(cc_tst$Class,pred_gbm_smote)
+sen_gbm_smote = Sensitivity(cc_tst$Class,pred_gbm_smote)
+
+## RF RESULTS
+pred_rf = predict(cc_rf_mod, cc_tst, type = "raw")
+cc_rf_mod$method
+table(
+  predicted = pred_rf,
+  actual = cc_tst$Class
+)
+f1_rf = F1_Score(cc_tst$Class,pred_rf)
+sen_rf = Sensitivity(cc_tst$Class,pred_rf)
+
+pred_rf_smote = predict(cc_rf_mod_smote, cc_tst, type = "raw")
+table(
+  predicted = pred_rf_smote,
+  actual = cc_tst$Class
+)
+f1_rf_smote = F1_Score(cc_tst$Class,pred_rf_smote)
+sen_rf_smote = Sensitivity(cc_tst$Class,pred_rf_smote)
+```
+
+```{r}
+# Model Comparision Sensitivity
+Model <- data.frame(group = c("rpart", "rpart with SMOTE",
+                              "NN", "NN with SMOTE","gbm","gbm with SMOTE", "rf", "rf with SMOTE"),
+                    Sensitivity = c(sen_tree, sen_tree_smote, sen_nn, sen_nn_smote, sen_gbm, 
+                                 sen_gbm_smote, f1_rf, f1_rf_smote))
+Model %>% ggplot(aes(x=group, y=Sensitivity, fill=group)) + geom_bar(stat="identity", show.legend = FALSE) + 
+          scale_fill_brewer(palette = "Dark2")
+```
+
+```{r}
+# Model Comparision F1
+Model <- data.frame(group = c("rpart", "rpart with SMOTE",
+                              "NN", "NN with SMOTE","gbm","gbm with SMOTE", "rf", "rf with SMOTE"),
+                    F1_SCORE = c(f1_tree, f1_tree_smote, f1_nn, f1_nn_smote, f1_gbm, 
+                                 f1_gbm_smote, f1_rf, f1_rf_smote))
+Model %>% ggplot(aes(x=group, y=F1_SCORE, fill=group)) + geom_bar(stat="identity", show.legend = FALSE) + 
+          scale_fill_brewer(palette = "Dark2")
+```
+
+The major goal of this project was to detect "fraud" in imbalanced data. That's why I used "Sensitivty" and "F1 Score" for evaluating performance of model. 
+First, let's look at the histogram of "Sensitivty", except the using "Neural Network", the "Sensitivty" increased after applying SMOTE method to the imbalanced dataset. It represents that model trained with balanced data have better performance to detect "fraud". 
+Second, in terms of F1, only the Random Forest model has increased after using SMOTE. The "F1 Score" is a measure of a test's accuracy. Therefore, if I have to choose one among other models, I will choose Random Forest model with the hightset "F1 Score" and relevant high "Sensitivity"
+
+***
+
+## Discussion
+
+The SMOTE method can give more options of train data. In this project, I used only one condition of SMOTE, but if we generate multiple conditions, we could make a better model even with the higly imbalanced dataset. But I was pretty suprised that "F1 Scroe" of some model has decreased with balanced dataset. I think the reason is that rapid growth of "Sensitivity" causes decrease in "F1 Score". 
+
+***
+
+## Appendix
+The feature descriptions are as follows:
+
+Time - the seconds elapsed between each transaction and the first transaction in the dataset
+V1, V2, …, V28 - principal components obtained through dimensionality reduction (PCA)
+Amount - the transaction amount
+Class - the response variable, indicating whether a transaction was fraudulent or not
