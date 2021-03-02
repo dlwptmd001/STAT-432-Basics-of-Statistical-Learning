@@ -6,7 +6,7 @@ For the Fall 2020 semester, this repository contains the 4 analysis from the giv
 - 'Heart Diesease'
 - 'Credit Fraud'
 - 'MLB Pitching'
-- 'Image Recognition'
+
 
 
 ## Learning Objectives
